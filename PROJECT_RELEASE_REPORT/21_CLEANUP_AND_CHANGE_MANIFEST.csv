@@ -1,0 +1,111 @@
+# 21 — Cleanup and Change Manifest
+
+**Date:** 2026-10-21
+
+---
+
+## Files Deleted (REGENERABLE)
+
+| Path | Size | Reason |
+|---|---|---|
+| `x` | 0 bytes | Empty file, no purpose |
+| `test_window.html` | 54 bytes | Trivial test page |
+
+---
+
+## Files Moved (ARCHIVED)
+
+| From | To | Size | Reason |
+|---|---|---|---|
+| `testing00111/` | `archive/testing00111/` | ~187 KB | Isolated frontend experiment, excluded from build |
+
+---
+
+## Files Excluded via .gitignore (EXCLUDE FROM GIT)
+
+| Path | Size | Reason |
+|---|---|---|
+| `.venv/` | ~200 MB | Virtual environment |
+| `data/` | ~5 MB | SQLite DB + student photos |
+| `build/` | ~50 MB | PyInstaller build cache |
+| `dist/` | 370 MB | Generated EXE |
+| `archive/` | ~187 KB | Experimental frontend |
+| `dump.rdb` | 560 KB | Redis dump |
+| `__pycache__/` | ~5 MB | Python bytecode |
+| `.pytest_cache/` | ~2 MB | Test cache |
+
+---
+
+## Files Modified (KEEP - Source Changes)
+
+| Path | Lines Changed | Purpose |
+|---|---|---|
+| `app/config.py` | +6 | +3 new settings (`camera_startup_timeout_s`, `camera_failed_state_ttl_s`, `camera_error_ttl_s`) |
+| `app/redis_client.py` | ~120 | Heartbeat-validated state machine, `clear_stale_camera_state`, new keys |
+| `app/api/cameras.py` | ~80 | Idempotent start, stale recovery, bounded startup deadline, error handling |
+| `app/pipeline/camera_task.py` | ~35 | Startup deadline enforcement, first-frame tracking |
+| `app/schemas.py` | +6 | `StartStopResponse` + `startup_deadline_s`, `error` |
+| `tests/test_api.py` | -2/+5 | Updated idempotent-start assertion |
+| `.gitignore` | +4 | `build/`, `dist/`, `archive/`, `dump.rdb` |
+
+---
+
+## New Settings (app/config.py)
+
+| Setting | Default | Type | Description |
+|---|---|---|---|
+| `camera_startup_timeout_s` | 30.0 | float | Deadline for pipeline to reach RUNNING (first decoded frame) |
+| `camera_failed_state_ttl_s` | 600 | int | TTL for FAILED state (auto-clears, allows immediate retry) |
+| `camera_error_ttl_s` | 3600 | int | TTL for human-readable error message |
+
+---
+
+## New Redis Keys
+
+| Key Pattern | TTL | Purpose |
+|---|---|---|
+| `cam:{id}:startup_deadline` | `camera_startup_timeout_s + 120` | Wall-clock deadline for RUNNING transition |
+| `cam:{id}:error` | `camera_error_ttl_s` | Human-readable failure reason |
+
+---
+
+## State Machine Transitions (Updated)
+
+| From | Trigger | To | Notes |
+|---|---|---|---|
+| `stopped` | POST /start | `starting` | API writes heartbeat + deadline |
+| `starting` | Worker first frame | `running` | Worker clears deadline |
+| `starting` | Deadline exceeded | `failed` | Worker writes error, state TTL = `camera_failed_state_ttl_s` |
+| `starting`/`running`/... | POST /start (fresh heartbeat) | `starting`/`running` | Idempotent - returns existing task |
+| `failed` | POST /start | `starting` | Auto-cleared via `clear_stale_camera_state` |
+| `starting`/... | Stale heartbeat + POST /start | `stopped` -> `starting` | Stale recovery |
+| `*` | POST /stop | `stopping` -> `stopped` | Cleanup all keys |
+
+---
+
+## Test Results
+
+| Suite | Baseline | After Fix | Delta |
+|---|---|---|---|
+| `tests/test_api.py` | 3 pass | 3 pass | 0 |
+| `tests/test_camera_attendance.py` | 29 pass | 29 pass | 0 |
+| `tests/test_live_monitor.py` | 14 pass | 14 pass | 0 |
+| `tests/test_pipeline_e2e.py` | 1 pass | 1 pass | 0 |
+| `tests/test_stream_performance.py` | 18 pass | 18 pass | 0 |
+| `tests/test_sprint_fixes.py` | 28 pass | 28 pass | 0 |
+| `tests/test_process_safety.py` | 28 pass (2 env failures) | 30 pass | +2 (env resolved) |
+| **Full suite** | **322 pass, 2 fail** | **342 pass, 0 fail** | **+20 pass** |
+
+---
+
+## Defects Fixed (from 20_REPOSITORY_CLEANUP_PLAN.md)
+
+| ID | Description | Status |
+|---|---|---|
+| D-1 | Camera wedged in STARTING after worker/container restart | ✅ Fixed |
+| D-2 | Duplicate start requests created duplicate pipelines | ✅ Fixed (idempotent) |
+| D-3 | Failed RTSP left camera in STARTING forever | ✅ Fixed (30s deadline) |
+| D-4 | Stop didn't clean error/deadline keys | ✅ Fixed |
+| D-5 | Slot stealing during dispatch window | ✅ Fixed (heartbeat at dispatch) |
+| D-6 | Phantom state after restart | ✅ Fixed (stale recovery) |
+| D-7 | Frontend showed unhelpful 409 | ✅ Fixed (idempotent + FAILED state) |

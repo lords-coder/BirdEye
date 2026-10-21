@@ -1,0 +1,75 @@
+# ---------------------------------------------------------------------------
+# AI Video Attendance backend - Python dependencies (Python 3.11+)
+#
+# PINNED: these exact versions are what this repository is verified with
+# (`python -m pytest -q` => 69 passed on 2026-10-04, Windows 11 / Python 3.11.9).
+# Install with:   pip install -r requirements.txt -r requirements-dev.txt
+#
+# GPU notes (READ THIS):
+#   * `insightface==2.0` pulls in the CPU `onnxruntime` package and the GUI
+#     `opencv-python` wheel as its own dependencies.  For GPU deployments you
+#     swap them afterwards (this is the official InsightFace 2.0 recipe):
+#
+#       pip uninstall -y onnxruntime opencv-python
+#       pip install onnxruntime-gpu==1.26.0 opencv-python-headless
+#
+#   The Dockerfile does exactly this automatically.  On a local machine run
+#   `scripts/setup_gpu.ps1` (Windows) or `scripts/setup_gpu.sh` (Linux/macOS).
+#
+#   RTX 50-series (Blackwell, sm_120) notes - the pins here are deliberate:
+#     * onnxruntime-gpu 1.26.0 is the NEWEST build still targeting CUDA 12
+#       + cuDNN 9 (1.27.0 moved to CUDA 13, which needs driver >= 580).
+#     * The Docker base image is CUDA 12.8.1 + cuDNN 9 (sm_120 support with
+#       the Blackwell floor driver >= 570.xx).
+#     * onnxruntime-gpu >= 1.21 is required for sm_120 (RTX 5060/5070/...).
+#   If your driver is >= 580 you may optionally use onnxruntime-gpu>=1.27
+#   with a CUDA 13 base image - see the README "GPU / CUDA" section.
+# ---------------------------------------------------------------------------
+
+# Web framework
+# FastAPI + starlette pinned EXACTLY (readiness phase): starlette 0.38.6
+# carried 14 advisories (pip-audit, 2026-10) that could not be patched
+# without a coordinated framework upgrade; verified green on the 195-test
+# suite.  Bump both together and re-run `pip_audit -r requirements.txt`.
+fastapi==0.143.1
+starlette==1.8.0
+uvicorn[standard]==0.32.0
+pydantic==2.9.2
+pydantic-settings==2.5.2
+python-multipart==0.0.31
+
+# Database
+SQLAlchemy==2.0.35
+alembic==1.14.0
+psycopg[binary]==3.3.6
+
+# Background processing / messaging
+#
+# NOTE: deliberately NOT celery[redis].  The [redis] extra pulls in
+# kombu[redis], which caps `redis>=4.5.2,<6.5` and therefore conflicts with
+# the redis 7.4.1 this repo is verified against (pip: ResolutionImpossible).
+# The extra only ever adds the `redis` package, which is pinned right below,
+# so dropping it changes nothing at runtime and keeps a single resolvable set.
+celery==5.6.3
+redis==7.4.1
+async_timeout==4.0.3
+
+# Auth
+PyJWT==2.15.0
+
+# Encryption at rest (app/crypto.py -> Fernet).  DEPENDS ON IT DIRECTLY:
+# nothing else in this file pulls it in (only extras like PyJWT[crypto] and
+# celery[auth] do, and we do not install those), so a fresh venv previously
+# failed at `alembic upgrade head` with ModuleNotFoundError: cryptography.
+cryptography==50.0.2
+
+# ML / video (insightface also installs numpy, opencv-python, onnxruntime,
+# onnx, scipy, scikit-image - see GPU note above for the runtime swap)
+insightface==2.0
+numpy==2.1.3
+
+# GPU telemetry for /system/gpu-status (provides the `pynvml` module)
+nvidia-ml-py==12.560.30
+
+# IANA timezone database (needed by zoneinfo on Windows; harmless elsewhere)
+tzdata==2025.3

@@ -1,0 +1,67 @@
+# ---------------------------------------------------------------------------
+# AI Video Attendance - ignore rules (see README "Privacy rules").
+# Privacy: secrets, databases, face photos, embeddings, videos and model
+# weights must NEVER be committed or shipped in an archive.
+# ---------------------------------------------------------------------------
+
+# secrets / local config
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# runtime data (reference photos, SQLite DBs, reports, logs)
+data/
+*.db
+*.sqlite3
+*.sqlite-journal
+roster.local.csv
+
+# model weights / caches
+*.onnx
+*.npy
+*.npz
+.insightface/
+models/
+
+# media (never ship in git)
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.webp
+*.wav
+*.mp3
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# build output
+build/
+dist/
+archive/
+
+# redis dump
+dump.rdb
+
+# tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,12 @@
+path,change,notes
+app/models.py,extended,build_rtsp_url omits empty password field (user@host)
+tests/test_camera_attendance.py,extended,+1 regression test for empty-password URL build (29 total in file)
+PROJECT_CAMERA_ATTENDANCE_REPORT/00_IMPLEMENTATION_SUMMARY.md,added,BirdEye results-at-a-glance + done-status
+PROJECT_CAMERA_ATTENDANCE_REPORT/01_CAMERA_ACCEPTANCE_RESULTS.md,added,device interrogation + credential workflow + stream blocker + user step
+PROJECT_CAMERA_ATTENDANCE_REPORT/02_ATTENDANCE_ACCURACY_RESULTS.md,added,measured gallery results + proposed thresholds (unapproved)
+PROJECT_CAMERA_ATTENDANCE_REPORT/03_ENTRY_EXIT_AND_TEACHER_ACCEPTANCE.md,added,E2E proof + result legend (synthetic/physical/blocked/not-run/unknown)
+PROJECT_CAMERA_ATTENDANCE_REPORT/04_DEPLOYMENT_VALIDATION.md,added,native-stack validation table + blocked runtimes
+PROJECT_CAMERA_ATTENDANCE_REPORT/05_SECURITY_AND_RELIABILITY_RESULTS.md,added,re-verified controls + degraded-mode evidence
+PROJECT_CAMERA_ATTENDANCE_REPORT/06_REMAINING_BLOCKERS.md,added,7 blockers with unblock steps
+PROJECT_CAMERA_ATTENDANCE_REPORT/07_GO_LIVE_CHECKLIST.md,added,10-item sign-off checklist
+PROJECT_CAMERA_ATTENDANCE_REPORT/08_CHANGE_MANIFEST.csv,added,this file

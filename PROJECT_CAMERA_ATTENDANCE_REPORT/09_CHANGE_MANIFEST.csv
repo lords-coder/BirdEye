@@ -1,0 +1,35 @@
+path,change,notes
+app/config.py,extended,"camera/presence/policy knobs (timeouts, thresholds, dedup)"
+app/crypto.py,extended,encrypt_text/decrypt_text for camera secrets at rest
+app/models.py,extended,"Camera +13 cols; Course; Period course/policy; Session source/review; User teacher role; PresenceState/Event; AttendanceRecord/Override"
+alembic/versions/0006_camera_attendance.py,added,migration (round-trip verified; alembic check clean)
+app/users.py,extended,ROLE_TEACHER + ADMIN_ROLES
+app/security.py,extended,"get_current_admin fail-closed; get_current_staff; Principal.is_admin/is_teacher"
+app/api/deps.py,extended,export get_current_staff
+app/api/ws.py,rewrote,"survives Redis outage (status+resubscribe); 4401 non-admins; ping/pong"
+app/api/cameras.py,rewrote,"structured config; encrypted passwords; redacted outputs; inline-cred migration; test-connection; enable/disable; snapshot/MJPEG; disabled-start 409"
+app/services/camera_test.py,added,classified probes (ffmpeg+opencv) with redaction
+app/services/presence.py,added,"state machine + audit + review; race-safe; exit-wins for both-cams"
+app/services/attendance_engine.py,added,"windows; clipping; thresholds; machine/effective; overrides"
+app/api/courses.py,added,course CRUD + teacher scoping helpers
+app/api/attendance.py,extended,"history; period records/compute; overrides+audit; presence review (literal routes before parameterized)"
+app/api/periods.py,rewrote,course/policy fields via course-aware serializer
+app/main.py,extended,courses router + tag
+app/pipeline/camera_task.py,extended,"presence integration; structured source; last_frame_at telemetry"
+app/services/events.py,extended,presence_state event builder
+app/schemas.py,extended,"camera secrets/roles/test/result; courses; records; overrides; history; presence; UserUpdate teacher"
+.env.example,extended,new knobs documented
+app/static/index.html,extended,"History/Periods/Teacher sections; camera form fields; preview card; override dialog; role nav; v1.1.0"
+app/static/app.js,extended,"role gating+landing; cameras mgmt+preview; history; periods+records+override; teacher portal; WS keepalive/4401/status"
+app/static/styles.css,extended,modal overlay (functional)
+tests/test_camera_attendance.py,added,28 regression tests (authz/secrets/probes/presence/engine/overrides/history/courses/WS)
+PROJECT_CAMERA_ATTENDANCE_REPORT/00_SUMMARY.md,added,phase summary + decisions + bugs found
+PROJECT_CAMERA_ATTENDANCE_REPORT/01_CAMERA_MANAGEMENT.md,added,design + secrecy audit
+PROJECT_CAMERA_ATTENDANCE_REPORT/02_ENTRY_EXIT_TRACKING.md,added,state machine + rules
+PROJECT_CAMERA_ATTENDANCE_REPORT/03_ATTENDANCE_ENGINE.md,added,policy + boundaries
+PROJECT_CAMERA_ATTENDANCE_REPORT/04_TEACHER_PORTAL.md,added,roles + verified authz matrix
+PROJECT_CAMERA_ATTENDANCE_REPORT/05_API_DB_CHANGES.md,added,endpoints + migration + WS fix
+PROJECT_CAMERA_ATTENDANCE_REPORT/06_TEST_RESULTS.md,added,223-pass evidence + non-claims
+PROJECT_CAMERA_ATTENDANCE_REPORT/07_HARDWARE_RUNBOOK.md,added,acceptance steps + PENDING table
+PROJECT_CAMERA_ATTENDANCE_REPORT/08_REMAINING_ISSUES.md,added,"O-1..O-5 + H-1..H-6"
+PROJECT_CAMERA_ATTENDANCE_REPORT/09_CHANGE_MANIFEST.csv,added,this file

@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Video Attendance</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+
+  <!-- ============================== LOGIN ============================== -->
+  <div id="login-view" class="login-wrap" hidden>
+    <form id="login-form" class="card login-card">
+      <h1>&#128247; AI Video Attendance</h1>
+      <p class="muted">Sign in with your account</p>
+      <label>Username
+        <input id="login-username" autocomplete="username" required>
+      </label>
+      <label>Password
+        <input id="login-password" type="password" autocomplete="current-password" required>
+      </label>
+      <p id="login-error" class="error" hidden></p>
+      <p id="login-info" class="muted small" hidden></p>
+      <button class="btn primary block" type="submit">Sign in</button>
+      <div class="login-alt">
+        <button class="btn ghost" type="button" id="btn-show-register">Register</button>
+        <button class="btn ghost" type="button" id="btn-show-forgot">Forgot password?</button>
+      </div>
+      <p class="muted small">API docs: <a href="/docs" target="_blank">/docs</a></p>
+    </form>
+  </div>
+
+  <!-- ============================ REGISTER ============================= -->
+  <div id="register-view" class="login-wrap" hidden>
+    <form id="register-form" class="card login-card">
+      <h1>&#128100; Register</h1>
+      <p class="muted">New accounts are reviewed and approved by the super admin</p>
+      <label>Username
+        <input id="reg-username" autocomplete="username" minlength="3" maxlength="100"
+               pattern="[A-Za-z0-9_.\-]{3,100}" required>
+      </label>
+      <label>Display name
+        <input id="reg-display" maxlength="200" placeholder="optional">
+      </label>
+      <label>Password
+        <input id="reg-password" type="password" autocomplete="new-password"
+               minlength="8" required>
+      </label>
+      <label>Confirm password
+        <input id="reg-confirm" type="password" autocomplete="new-password"
+               minlength="8" required>
+      </label>
+      <p class="muted small">Minimum 8 characters. Only the super admin can set or change a password afterwards.</p>
+      <p id="register-error" class="error" hidden></p>
+      <button class="btn primary block" type="submit">Create account</button>
+      <div class="login-alt">
+        <button class="btn ghost" type="button" id="btn-register-back">&#8592; Back to sign in</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- ========================= FORGOT PASSWORD ========================= -->
+  <div id="forgot-view" class="login-wrap" hidden>
+    <form id="forgot-form" class="card login-card">
+      <h1>&#128274; Forgot password</h1>
+      <p class="muted">Your request is sent to the super admin, who sets the new password</p>
+      <label>Username
+        <input id="forgot-username" autocomplete="username" required>
+      </label>
+      <label>Why do you need a reset?
+        <textarea id="forgot-reason" maxlength="500" rows="3" placeholder="optional"></textarea>
+      </label>
+      <p id="forgot-error" class="error" hidden></p>
+      <button class="btn primary block" type="submit">Send request</button>
+      <div class="login-alt">
+        <button class="btn ghost" type="button" id="btn-forgot-back">&#8592; Back to sign in</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- =============================== APP =============================== -->
+  <div id="app-view" class="layout" hidden>
+    <aside class="sidebar">
+      <div class="brand">&#128247; Attendance</div>
+      <nav id="nav">
+        <button class="nav-btn active" data-section="dashboard">&#128200; Dashboard</button>
+        <button class="nav-btn" data-section="students" id="nav-students">&#128101; Students</button>
+        <button class="nav-btn" data-section="cameras" id="nav-cameras">&#128249; Cameras</button>
+        <button class="nav-btn" data-section="attendance" id="nav-attendance">&#128197; Attendance</button>
+        <button class="nav-btn" data-section="periods" id="nav-periods">&#128198; Periods</button>
+        <button class="nav-btn" data-section="history" id="nav-history">&#128337; History</button>
+        <button class="nav-btn" data-section="teacher" id="nav-teacher" hidden>&#127891; My classes</button>
+        <button class="nav-btn" data-section="live" id="nav-live">&#128225; Live</button>
+        <button class="nav-btn" data-section="monitor" id="nav-monitor">&#128250; Monitor</button>
+        <button class="nav-btn" data-section="users" id="nav-users" hidden>&#128100; Users</button>
+        <button class="nav-btn" data-section="system" id="nav-system">&#9881;&#65039; System</button>
+      </nav>
+      <div class="sidebar-foot">
+        <a href="/docs" target="_blank">API docs</a>
+        <span id="version-label" class="muted"></span>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <h2 id="section-title">Dashboard</h2>
+        <div class="topbar-right">
+          <span id="user-label" class="muted"></span>
+          <button id="btn-logout" class="btn ghost">Log out</button>
+        </div>
+      </header>
+
+      <div id="toasts"></div>
+
+      <!-- ---------------------------- DASHBOARD --------------------------- -->
+      <section id="sec-dashboard">
+        <div class="stat-grid">
+          <div class="card stat"><div class="stat-label">API health</div><div id="st-health" class="stat-value">…</div><div id="st-health-sub" class="stat-sub"></div></div>
+          <div class="card stat"><div class="stat-label">Inference</div><div id="st-inference" class="stat-value">…</div><div id="st-inference-sub" class="stat-sub"></div></div>
+          <div class="card stat"><div class="stat-label">Students</div><div id="st-students" class="stat-value">…</div><div class="stat-sub">enrolled with face data</div></div>
+          <div class="card stat"><div class="stat-label">Cameras</div><div id="st-cameras" class="stat-value">…</div><div id="st-cameras-sub" class="stat-sub"></div></div>
+          <div class="card stat"><div class="stat-label">Present today</div><div id="st-present" class="stat-value">…</div><div id="st-present-sub" class="stat-sub"></div></div>
+        </div>
+        <div class="card">
+          <h3>GPU / inference detail</h3>
+          <div id="dash-gpu" class="kv muted">loading…</div>
+        </div>
+      </section>
+
+      <!-- ---------------------------- STUDENTS ---------------------------- -->
+      <section id="sec-students" hidden>
+        <div class="toolbar">
+          <input id="stu-q" placeholder="Search name or registration no.">
+          <button id="btn-enroll-toggle" class="btn primary">+ Enroll student</button>
+        </div>
+
+        <form id="enroll-form" class="card form-card" hidden>
+          <h3>Enroll student (3–5 clear face photos)</h3>
+          <div class="form-grid">
+            <label>Full name <input id="s-name" required maxlength="200"></label>
+            <label>Registration no. <input id="s-reg" required maxlength="64"></label>
+            <label>Section <input id="s-section" maxlength="64" placeholder="optional"></label>
+            <label class="file-label">Photos (3–5)
+              <input id="s-photos" type="file" accept="image/*" multiple required>
+              <span id="s-photos-count" class="muted small">no files</span>
+            </label>
+          </div>
+          <div class="form-actions">
+            <button class="btn primary" type="submit">Enroll</button>
+            <button class="btn ghost" type="button" id="btn-enroll-cancel">Cancel</button>
+            <span class="muted small">Face embeddings are computed on the GPU inference service.</span>
+          </div>
+        </form>
+
+        <div class="card">
+          <div class="card-head"><h3>Students</h3><span id="students-count" class="muted small"></span></div>
+          <table>
+            <thead><tr><th>ID</th><th>Name</th><th>Reg. no.</th><th>Section</th><th>Photos</th><th>Embeddings</th><th></th></tr></thead>
+            <tbody id="students-body"><tr><td colspan="7" class="muted">loading…</td></tr></tbody>
+          </table>
+        </div>
+        <input type="file" id="photo-input" accept="image/*" multiple hidden>
+      </section>
+
+      <!-- ---------------------------- CAMERAS ----------------------------- -->
+      <section id="sec-cameras" hidden>
+        <div class="toolbar">
+          <span class="muted">Each running camera occupies a dedicated worker slot. Passwords are encrypted and never shown again.</span>
+          <button id="btn-camera-toggle" class="btn primary">+ Add camera</button>
+        </div>
+
+        <form id="camera-form" class="card form-card" hidden>
+          <h3 id="camera-form-title">Add camera</h3>
+          <input type="hidden" id="c-id">
+          <div class="form-grid">
+            <label>Name <input id="c-name" required maxlength="100"></label>
+            <label>Room / classroom <input id="c-room" maxlength="120" placeholder="e.g. C-204"></label>
+            <label>Camera role
+              <select id="c-role">
+                <option value="">not set</option>
+                <option value="classroom_interior">classroom interior</option>
+                <option value="doorway_exterior">doorway / exterior</option>
+              </select>
+            </label>
+            <label>Pipeline type
+              <select id="c-type">
+                <option value="entry">entry (records entries)</option>
+                <option value="exit">exit (records exits)</option>
+                <option value="both">both</option>
+              </select>
+            </label>
+            <label>IP address / hostname <input id="c-host" maxlength="255" placeholder="e.g. 192.168.1.42"></label>
+            <label>RTSP port <input id="c-port" type="number" min="1" max="65535" placeholder="554"></label>
+            <label>Stream path <input id="c-path" maxlength="255" placeholder="e.g. /Streaming/Channels/101"></label>
+            <label>Username <input id="c-user" maxlength="128" autocomplete="off"></label>
+            <label>Password <input id="c-pass" type="password" maxlength="200" autocomplete="new-password" placeholder="stored encrypted"></label>
+            <label>Legacy RTSP URL <input id="c-rtsp" maxlength="500" placeholder="rtsp://… (only if not using host fields)"></label>
+            <label>Video file path <input id="c-file" maxlength="550" placeholder="local file, e.g. samples/videos/demo.mp4"></label>
+            <label>Sampling rate (frames/s) <input id="c-rate" type="number" min="1" max="600" value="5"></label>
+            <label>Location <input id="c-location" maxlength="200" placeholder="optional"></label>
+            <label>Notes <input id="c-notes" maxlength="500" placeholder="optional"></label>
+            <label class="inline small"><input id="c-enabled" type="checkbox" checked> enabled (startable)</label>
+          </div>
+          <div class="form-actions">
+            <button class="btn" type="button" id="btn-cam-test">Test connection</button>
+            <button class="btn primary" type="submit" id="btn-cam-save">Save</button>
+            <button class="btn ghost" type="button" id="btn-camera-cancel">Cancel</button>
+            <span class="muted small" id="c-test-result"></span>
+          </div>
+        </form>
+
+        <div class="card" id="camera-preview-card" hidden>
+          <div class="card-head">
+            <h3 id="camera-preview-title">Preview</h3>
+            <button class="btn small ghost" id="btn-preview-close">close</button>
+          </div>
+          <img id="camera-preview-img" alt="camera snapshot" style="max-width:100%;max-height:360px;background:#000">
+          <p class="muted small" id="camera-preview-note">authenticated snapshot stream &mdash; credentials never leave the server</p>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3>Cameras</h3><span id="cameras-count" class="muted small"></span></div>
+          <table>
+            <thead><tr><th>ID</th><th>Name</th><th>Room</th><th>Role</th><th>Source</th><th>State</th><th>Health</th><th>Enabled</th><th></th></tr></thead>
+            <tbody id="cameras-body"><tr><td colspan="9" class="muted">loading…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- --------------------------- ATTENDANCE --------------------------- -->
+      <section id="sec-attendance" hidden>
+        <div class="toolbar">
+          <label class="inline">Date <input id="att-date" type="date"></label>
+          <label class="inline small"><input id="att-absent" type="checkbox"> include absent</label>
+          <button id="btn-att-refresh" class="btn primary">Refresh</button>
+        </div>
+
+        <div class="stat-grid">
+          <div class="card stat"><div class="stat-label">Present</div><div id="att-present" class="stat-value">–</div><div class="stat-sub">students</div></div>
+          <div class="card stat"><div class="stat-label">Ongoing</div><div id="att-ongoing" class="stat-value">–</div><div class="stat-sub">sessions now</div></div>
+          <div class="card stat"><div class="stat-label">Completed</div><div id="att-completed" class="stat-value">–</div><div class="stat-sub">sessions</div></div>
+          <div class="card stat"><div class="stat-label">Total time</div><div id="att-hours" class="stat-value">–</div><div class="stat-sub">hh:mm</div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3>Daily summary</h3><span id="summary-count" class="muted small"></span></div>
+          <table>
+            <thead><tr><th>Student</th><th>Reg. no.</th><th>Section</th><th>Entries</th><th>Exits</th><th>First entry</th><th>Last exit</th><th>Total</th><th>Status</th></tr></thead>
+            <tbody id="summary-body"><tr><td colspan="9" class="muted">loading…</td></tr></tbody>
+          </table>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h3>Recognition log</h3>
+            <span class="ws-status"><span id="logs-dot" class="dot"></span><span id="logs-status" class="muted small">connecting…</span></span>
+            <span id="logs-count" class="muted small"></span>
+          </div>
+          <button id="logs-new" class="btn small ghost" hidden></button>
+          <table>
+            <thead><tr><th>Time</th><th>Student</th><th>Camera</th><th>Confidence</th><th>GPU (ms)</th></tr></thead>
+            <tbody id="logs-body"><tr><td colspan="5" class="muted">loading…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ------------------------------ LIVE ------------------------------ -->
+      <section id="sec-live" hidden>
+        <div class="toolbar">
+          <span class="ws-status"><span id="ws-dot" class="dot"></span><span id="ws-status" class="muted">connecting…</span></span>
+          <button id="btn-live-refresh" class="btn ghost">Refresh sessions</button>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3>Ongoing sessions</h3><span id="live-count" class="muted small"></span></div>
+          <table>
+            <thead><tr><th>Student</th><th>Entry</th><th>Elapsed</th><th>Camera</th></tr></thead>
+            <tbody id="live-body"><tr><td colspan="4" class="muted">loading…</td></tr></tbody>
+          </table>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3>Live event feed</h3><span class="muted small">WebSocket /ws/live-feed</span></div>
+          <div id="events" class="events"><div class="muted">waiting for events…</div></div>
+        </div>
+      </section>
+
+      <!-- ---------------------------- MONITOR ----------------------------- -->
+      <section id="sec-monitor" hidden>
+        <div class="toolbar">
+          <label class="inline">Camera
+            <select id="mon-camera" style="max-width:240px"><option value="">choose…</option></select>
+          </label>
+          <button id="btn-mon-start" class="btn primary">Start</button>
+          <button id="btn-mon-stop" class="btn">Stop</button>
+          <button id="btn-mon-retry" class="btn">Retry</button>
+          <span class="ws-status"><span id="mon-dot" class="dot"></span><span id="mon-status" class="muted">select a camera</span></span>
+        </div>
+
+        <div class="two-col">
+          <div class="card">
+            <div class="card-head"><h3 id="mon-title">Monitor</h3><span id="mon-viewers" class="muted small"></span></div>
+            <img id="mon-video" alt="live camera feed"
+                 style="width:100%;max-height:480px;background:#000;display:block">
+            <p class="muted small" id="mon-sub">No camera selected. Video here comes from the running
+              pipeline (with recognition overlays) — never a substitute clip.</p>
+          </div>
+          <div>
+            <div class="card">
+              <div class="card-head"><h3>Present now</h3><span id="mon-present-count" class="muted small"></span></div>
+              <div id="mon-present"><span class="muted">waiting for recognitions…</span></div>
+              <p class="muted small">Live presence only — official status lives under Periods
+                (PRESENT / provisional / ABSENT / review / override).</p>
+            </div>
+            <div class="card">
+              <div class="card-head"><h3>Camera events</h3><span class="muted small">confirmed entries, exits, errors</span></div>
+              <div id="mon-events" class="events"><div class="muted">waiting for events…</div></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ------------------------------ HISTORY --------------------------- -->
+      <section id="sec-history" hidden>
+        <div class="toolbar">
+          <label class="inline">From <input id="h-from" type="date"></label>
+          <label class="inline">To <input id="h-to" type="date"></label>
+          <label class="inline">Student ID <input id="h-student" type="number" min="1" style="width:90px"></label>
+          <label class="inline">Camera ID <input id="h-camera" type="number" min="1" style="width:90px"></label>
+          <label class="inline">Section <input id="h-section" maxlength="64" style="width:100px"></label>
+          <label class="inline small"><input id="h-unresolved" type="checkbox"> open only</label>
+          <button id="btn-h-refresh" class="btn primary">Apply filters</button>
+        </div>
+
+        <div class="stat-grid">
+          <div class="card stat"><div class="stat-label">Intervals</div><div id="h-total" class="stat-value">–</div><div class="stat-sub">matching rows</div></div>
+          <div class="card stat"><div class="stat-label">Completed</div><div id="h-exits" class="stat-value">–</div><div class="stat-sub">entry + exit observed</div></div>
+          <div class="card stat"><div class="stat-label">Open</div><div id="h-open" class="stat-value">–</div><div class="stat-sub">no observed exit</div></div>
+          <div class="card stat"><div class="stat-label">Total time</div><div id="h-time" class="stat-value">–</div><div class="stat-sub">hh:mm</div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3>Student entry/exit history</h3><span id="h-count" class="muted small"></span></div>
+          <table>
+            <thead><tr><th>Student</th><th>Section</th><th>Entry</th><th>Exit</th><th>Duration</th><th>In camera</th><th>Out camera</th><th>Period</th><th>Status</th></tr></thead>
+            <tbody id="history-body"><tr><td colspan="9" class="muted">loading…</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ------------------------------ PERIODS --------------------------- -->
+      <section id="sec-periods" hidden>
+        <div class="toolbar">
+          <span class="muted">Timetable lectures and their automatic attendance.</span>
+          <button id="btn-period-toggle" class="btn primary">+ Add period</button>
+        </div>
+
+        <form id="period-form" class="card form-card" hidden>
+          <h3 id="period-form-title">Add period</h3>
+          <input type="hidden" id="p-id">
+          <div class="form-grid">
+            <label>Name <input id="p-name" required maxlength="100" placeholder="e.g. Mon 09:30 Math"></label>
+            <label>Start <input id="p-start" type="time" required></label>
+            <label>End <input id="p-end" type="time" required></label>
+            <label>Section <input id="p-section" maxlength="64" placeholder="e.g. CSE-A (blank = all)"></label>
+            <label>Course
+              <select id="p-course"><option value="">— none —</option></select>
+            </label>
+            <label>Required minutes <input id="p-minutes" type="number" min="1" placeholder="blank = default (30)"></label>
+          </div>
+          <div class="form-actions">
+            <button class="btn primary" type="submit">Save</button>
+            <button class="btn ghost" type="button" id="btn-period-cancel">Cancel</button>
+            <span class="muted small">Days: Mon&ndash;Sat by default. Threshold example: 30 min of a 60-min lecture.</span>
+          </div>
+        </form>
+
+        <div class="card">
+          <div class="card-head"><h3>Periods</h3><span id="periods-count" class="muted small"></span></div>
+          <table>
+            <thead><tr><th>ID</th><th>Name</th><th>Time</th><th>Section</th><th>Course</th><th>Teacher</th><th>Required</th><th></th></tr></thead>
+            <tbody id="periods-body"><tr><td colspan="8" class="muted">loading…</td></tr></tbody>
+          </table>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h3>Period attendance</h3>
+            <span class="muted small">
+              period <select id="rec-period" style="max-width:220px"><option value="">choose…</option></select>
+              date <input id="rec-date" type="date">
+              <button id="btn-rec-refresh" class="btn small primary">Compute</button>
+            </span>
+          </div>
+          <div id="rec-window" class="muted small"></div>
+          <table>
+            <thead><tr><th>Student</th><th>Reg. no.</th><th>Presence</th><th>Machine</th><th>Effective</th><th>Intervals</th><th></th></tr></thead>
+            <tbody id="records-body"><tr><td colspan="7" class="muted">choose a period and date</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ------------------------------ TEACHER --------------------------- -->
+      <section id="sec-teacher" hidden>
+        <div class="toolbar">
+          <span class="muted">Your assigned courses and today&rsquo;s lectures.</span>
+          <span class="muted small">date <input id="t-date" type="date"></span>
+          <button id="btn-t-refresh" class="btn primary">Refresh</button>
+        </div>
+        <div id="teacher-courses"><div class="card muted">loading…</div></div>
+      </section>
+      <!-- ------------------------------ USERS ----------------------------- -->
+      <section id="sec-users" hidden>
+        <div class="toolbar">
+          <span class="muted">Super admin only: approve accounts, set credentials, resolve password requests.</span>
+          <button id="btn-users-refresh" class="btn primary">Refresh</button>
+        </div>
+
+        <form id="credential-form" class="card form-card" hidden>
+          <h3 id="cred-title">Set credentials</h3>
+          <div class="form-grid">
+            <input type="hidden" id="cred-mode" value="user">
+            <input type="hidden" id="cred-user-id">
+            <input type="hidden" id="cred-request-id">
+            <label>Username
+              <input id="cred-username" maxlength="100" pattern="[A-Za-z0-9_.\-]{3,100}"
+                     placeholder="leave blank to keep">
+            </label>
+            <label>New password
+              <input id="cred-password" type="password" autocomplete="new-password" minlength="8"
+                     placeholder="leave blank to keep">
+            </label>
+            <label>Role
+              <select id="cred-role">
+                <option value="">keep</option>
+                <option value="admin">admin</option>
+                <option value="super_admin">super_admin</option>
+              </select>
+            </label>
+            <label>Security level (1&#8211;5)
+              <input id="cred-level" type="number" min="1" max="5" placeholder="1 = lowest, 5 = highest">
+            </label>
+          </div>
+          <div class="form-actions">
+            <button class="btn primary" type="submit">Save</button>
+            <button class="btn ghost" type="button" id="btn-cred-cancel">Cancel</button>
+            <span class="muted small">Only the super admin may change a username or password.</span>
+          </div>
+        </form>
+
+        <div class="card">
+          <div class="card-head"><h3>Accounts</h3><span id="users-count" class="muted small"></span></div>
+          <table>
+            <thead><tr><th>ID</th><th>Username</th><th>Name</th><th>Role</th><th>Status</th><th>Level</th><th>Created</th><th>Approved by</th><th></th></tr></thead>
+            <tbody id="users-body"><tr><td colspan="9" class="muted">loading&#8230;</td></tr></tbody>
+          </table>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3>Password reset requests</h3><span id="reset-count" class="muted small"></span></div>
+          <table>
+            <thead><tr><th>ID</th><th>Username</th><th>Reason</th><th>Status</th><th>Created</th><th>Resolved by</th><th></th></tr></thead>
+            <tbody id="reset-body"><tr><td colspan="7" class="muted">loading&#8230;</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ----------------------------- SYSTEM ----------------------------- -->
+      <section id="sec-system" hidden>
+        <div class="toolbar">
+          <span class="muted">Health, GPU telemetry and inference throughput.</span>
+          <button id="btn-sys-refresh" class="btn primary">Refresh</button>
+        </div>
+        <div class="two-col">
+          <div class="card"><h3>/system/health</h3><pre id="health-body" class="code">loading…</pre></div>
+          <div class="card"><h3>/system/gpu-status</h3><pre id="gpu-body" class="code">loading…</pre></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ======================= OVERRIDE DIALOG ========================== -->
+  <div id="override-modal" class="modal-overlay" hidden>
+    <form id="override-form" class="card modal-card">
+      <h3 id="ov-title">Correct attendance</h3>
+      <p class="muted small" id="ov-context"></p>
+      <label>Status
+        <select id="ov-status" required>
+          <option value="">choose&hellip;</option>
+          <option value="PRESENT">PRESENT</option>
+          <option value="ABSENT">ABSENT</option>
+        </select>
+      </label>
+      <label>Reason (required)
+        <textarea id="ov-reason" rows="3" maxlength="500" required
+                  placeholder="why is the automatic result wrong?"></textarea>
+      </label>
+      <p id="ov-error" class="error" hidden></p>
+      <div class="form-actions">
+        <button class="btn primary" type="submit">Apply override</button>
+        <button class="btn ghost" type="button" id="btn-ov-cancel">Cancel</button>
+      </div>
+      <p class="muted small">The automatic camera result is preserved; your correction and reason are recorded in the audit history.</p>
+    </form>
+  </div>
+
+  <!-- version query: without it the browser keeps serving the old app.js after an update -->
+  <script src="/static/app.js?v=1.2.0"></script>
+</body>
+</html>

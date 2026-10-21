@@ -1,0 +1,27 @@
+report,file,change_type,priority,description,tests_added,status
+15_CRITICAL_BUGS_AND_ROOT_CAUSES.md,PROJECT_CAMERA_ATTENDANCE_REPORT/,report,P0,"Root-cause analysis for all 4 production problems (camera coupling, entry/exit, log flood, video lag)",0,complete
+16_P0_FIXES_IMPLEMENTED.md,PROJECT_CAMERA_ATTENDANCE_REPORT/,report,P0,"Implementation details for all 4 fixes with before/after code",0,complete
+17_UNKNOWN_FACE_DEDUP_RESULTS.md,PROJECT_CAMERA_ATTENDANCE_REPORT/,report,P0,"Quantized hash fix: 2147 unknown rows → 1 per person per 120s",4,complete
+18_SNAPSHOT_REDIS_FIX.md,PROJECT_CAMERA_ATTENDANCE_REPORT/,report,P0,"Snapshot reads from Redis when pipeline running; eliminates competing RTSP capture",4,complete
+19_CORRIDOR_AND_ENTRY_EXIT_TESTS.md,PROJECT_CAMERA_ATTENDANCE_REPORT/,report,P0,"Corridor-passersby regression tests; entry/exit acceptance scenario coverage",2,complete
+20_CAMERA_INDEPENDENCE_TESTS.md,PROJECT_CAMERA_ATTENDANCE_REPORT/,report,P0,"Dual-camera independence tests; pipeline survives frontend disconnect",2,complete
+21_SPRINT_TEST_RESULTS.md,PROJECT_CAMERA_ATTENDANCE_REPORT/,report,P0,"Full test results: 237→250 passed, 0 regressions",0,complete
+22_CHANGE_MANIFEST.csv,PROJECT_CAMERA_ATTENDANCE_REPORT/,manifest,P0,"This file: complete change manifest for sprint 2026-10-18",0,complete
+app/pipeline/camera_task.py,app/pipeline/camera_task.py,code_fix,P0,"_unknown_hash: quantized to 2dp, all 512 dimensions hashed (was: raw floats, first 16 only)",0,complete
+app/api/cameras.py,app/api/cameras.py,code_fix,P0,"camera_snapshot: read from Redis when pipeline running; direct probe only when stopped",0,complete
+app/api/cameras.py,app/api/cameras.py,code_fix,P0,"camera_stream (legacy): read from Redis when pipeline running; direct probe only when stopped",0,complete
+app/config.py,app/config.py,config,P0,"Added unknown_cooldown_s=60 (safety net, not currently enforced)",0,complete
+tests/test_sprint_fixes.py,tests/test_sprint_fixes.py,test,P0,"13 new regression tests: dedup (4), snapshot (4), corridor (2), independence (1), config (2)",13,complete
+23_FINAL_ACCEPTANCE_GATE.md,PROJECT_CAMERA_ATTENDANCE_REPORT/,report,P0,"Final go/no-go gate: 11 PASS / 1 BLOCKED / 0 FAIL; physical-camera FPS + latency measured",0,complete
+24_RUNTIME_CONNECTIVITY_AND_CONCURRENCY.md,PROJECT_CAMERA_ATTENDANCE_REPORT/,report,P0,"Distinguishes camera configuration from authenticated live-stream verification from actual recognition; concurrency gate 12/12; outage drill; Redis setup; startup commands; remaining blockers",0,complete
+scripts/gate_concurrency.py,scripts/gate_concurrency.py,diagnostic,P1,"Runtime acceptance test: two camera tasks concurrent on distinct slots, stopping one does not stop the other, freed slot reclaimed",0,complete
+tests/test_camera_connectivity.py,tests/test_camera_connectivity.py,test,P1,"Classified connection diagnostics (unreachable/auth_failed/unsupported/no_frames/error) + credential redaction, 5 tests",5,complete
+tests/test_api.py,tests/test_api.py,test,P1,"Camera stream password never leaked (has_password + redacted display_url, single + list view)",1,complete
+app/api/cameras.py,app/api/cameras.py,defect_fix,P0,"FIX: running-pipeline + empty frame bus now returns 503 instead of falling through to a competing RTSP probe (snapshot + legacy stream)",0,complete
+tests/test_sprint_fixes.py,tests/test_sprint_fixes.py,test,P0,"9 gate tests added: snapshot-503 (3), legacy stream (2), volume-independence (1), occupancy (2), durations+attendance (1)",9,complete
+scripts/probe_rtsp_paths.py,scripts/probe_rtsp_paths.py,diagnostic,P1,"Discover working RTSP path per camera (Digest auth); revealed Dahua path /cam/realmonitor?channel=1&subtype=0",0,complete
+scripts/measure_dual_camera.py,scripts/measure_dual_camera.py,diagnostic,P1,"Simultaneous dual-camera capture FPS/health (25.6 + 25.9 fps @ 2560x1440, 0 failures)",0,complete
+scripts/measure_display_latency.py,scripts/measure_display_latency.py,diagnostic,P1,"End-to-end displayed-frame delay through real annotate path (~161-169 ms excl GPU inference)",0,complete
+scripts/gate_live_probe.py,scripts/gate_live_probe.py,diagnostic,P1,"Live auth/snapshot/event/security gate probe (15/15 passed)",0,complete
+scripts/gate_pipeline_live.py,scripts/gate_pipeline_live.py,diagnostic,P1,"Live pipeline start/stop + dual-camera independence verification",0,complete
+scripts/gate_snapshot_reuse.py,scripts/gate_snapshot_reuse.py,diagnostic,P1,"Live sentinel-JPEG proof that snapshot/stream reuse pipeline frames (gate 3)",0,complete

@@ -1,0 +1,80 @@
+action,path,category,reason,defect_ids
+modify,app/api/attendance.py,backend,"GET /attendance/logs now returns total via func.count",BUG-07
+modify,app/api/students.py,backend,"debug print converted to logger.debug",BUG-30
+modify,app/api/ws.py,backend,"full resolve_principal with DB session; revoked/suspended/deleted -> 4401",BUG-24;SEC-07
+modify,app/config.py,backend,"6 new policy settings (alert_low_confidence alert_dedup_window_s absent_grace_minutes late_grace_minutes early_exit_minutes camera_state_ttl_s)",BUG-16
+modify,app/inference/client.py,backend,"TimeoutError caught before RedisError (correct classification)",BUG-14;BUG-19
+modify,app/inference/server.py,backend,"batch coalescing capped by frames not requests (_frame_count)",BUG-11
+modify,app/main.py,backend,"authenticated path-confined GET /media replaces unauthenticated StaticFiles mount",SEC-03
+modify,app/models.py,backend,"removed redundant index=True on attendance_sessions.period_id (model/migration drift)",BUG-04
+modify,app/pipeline/camera_task.py,backend,"confirm-buffer sweep+release; per-frame try/except with rollback; config-driven thresholds; camera_state_ttl_s; reply-length mismatch logged",BUG-15;BUG-16;BUG-21;BUG-22
+modify,app/quality.py,backend,"duplicate threshold -> duplicate_identity_sim; single-row-gallery NaN (squeeze) fix; inference outage re-raised instead of swallowed",BUG-17;BUG-32;BUG-33
+modify,app/schemas.py,backend,"CameraBase/Create/Update/Out restructure; rtsp/rtsps/http/https scheme validators",BUG-23;SEC-02
+modify,app/security.py,backend,"unknown token subject fails closed (401) instead of minting super admin",BUG-25;SEC-08
+modify,app/services/alerts.py,backend,"local-day UTC dedup window (_local_day_start_utc); grace windows from settings",BUG-16;BUG-18
+modify,app/services/enrollment.py,backend,"add_photos decrypt-first rewrite (index math); bulk-import path confinement; replace_face duplicate guard; prints -> logger; quality-gate outage -> 503 (single+bulk)",BUG-01;BUG-29;BUG-30;BUG-31;BUG-33;SEC-09
+modify,app/tasks.py,backend,"INFERENCE_MODE=inprocess wired in camera_run; reaper errors logged",BUG-13
+modify,app/timeutil.py,backend,"warning logged on invalid LOCAL_TIMEZONE",BUG-28
+modify,app/workers/celery_app.py,backend,"dead camera_slot_dynamic route removed",BUG-12
+modify,app/static/app.js,frontend-min,"esc(c.rtsp_url); reconnect guard getToken(); logout clears wsRetry+liveTimer",BUG-05;BUG-06;BUG-08;SEC-02
+create,alembic/versions/0005_embeddings_text.py,migration,"students.embeddings JSON -> TEXT (PG USING cast + SQLite batch); symmetric downgrade",BUG-04
+create,.env.example,artifact,"complete environment template incl. 6 new settings; production-required keys annotated",H-02
+create,.gitignore,artifact,"cover .env data venv media artifacts (was missing)",H-02
+create,requirements-dev.txt,artifact,"pinned test-only deps pytest/fakeredis/httpx",H-02
+create,Dockerfile,artifact,"non-root API/worker image with healthcheck (GPU variant via ORT packages)",BUG-02
+create,Makefile,artifact,"setup/test/demo/run-api/enroll/calibrate targets",H-02
+create,scripts/setup_dev.ps1,artifact,"one-command Windows bootstrap; verified end-to-end",H-02
+create,scripts/setup_dev.sh,artifact,"one-command POSIX bootstrap",H-02
+create,scripts/run_worker.sh,artifact,"celery worker start script",BUG-02
+modify,docker-compose.yml,artifact,"DATA_DIR and INSIGHTFACE_ROOT env wired to existing bind mounts",BUG-02
+modify,scripts/run_demo.py,script,"personal default video path -> samples/videos/lecture.mp4; eval ref in docstring corrected",BUG-09
+modify,scripts/smoke_test.py,script,"metadata check on GET /api instead of HTML GET /",BUG-20
+modify,scripts/setup_student_database.py,script,"main(argv=None)+parse_args(argv) for judge_demo compatibility",BUG-03
+modify,scripts/check_accuracy.py,script,"personal temp path -> SITE_DB env with repo data/site.db default",BUG-09
+modify,scripts/enroll_from_clusters.py,script,"hardcoded personal videos dict -> samples/ filename lookup; dead vp var removed",BUG-09
+modify,scripts/extract_faces.py,script,"personal DEFAULT_VIDEOS removed; explicit --videos required",BUG-09
+create,tests/test_repair_regressions.py,tests,"25 regression tests; one+ per fixed defect",all-fixed
+rewrite,tests/test_registration.py,tests,"pattern-driven (settings.registration_no_pattern) instead of hard-coded regex",H-03
+modify,README.md,docs,"correct false claims: test counts 69->179; config defaults (DATABASE_URL LOCAL_TIMEZONE LOG_UNKNOWN_FACES); /system/health route; eval/ toolkit gap; new settings rows; auth-exempt list",H-04
+modify,CONTRIBUTING.md,docs,"remove references to missing eval/PROGRESS.md and eval/ROADMAP.md",H-04
+modify,docs/ARCHITECTURE.md,docs,"threshold-repro commands -> scripts/check_accuracy.py; measured table labelled historical; eval/ gap noted",H-04
+delete,add_fallback.py,debris,"root ad-hoc script; unreferenced",H-01
+delete,add_require_all.py,debris,"root ad-hoc script; syntactically invalid; unreferenced",H-01
+delete,add_require_enforce.py,debris,"root ad-hoc script; unreferenced",H-01
+delete,add_require_logic.py,debris,"root ad-hoc script; unreferenced",H-01
+delete,apply_fix.py,debris,"root ad-hoc script; unreferenced",H-01
+delete,fix_require_all.py,debris,"root ad-hoc script; targets long-gone signature; unreferenced",H-01
+delete,analyze_csv.py,debris,"root ad-hoc script; unreferenced",H-01
+delete,list_students.py,debris,"root ad-hoc script; unreferenced",H-01
+delete,test_drive.py,debris,"PII: real name + registration number in comments",BUG-10;H-01
+delete,test_drive2.py,debris,"PII: real name + registration number in comments",BUG-10;H-01
+delete,create_zip.py,debris,"references nonexistent scripts; unreferenced",H-01
+delete,build_handoff.py,debris,"root ad-hoc script; unused EXCLUDE_FILES; unreferenced",H-01
+create,PROJECT_REPAIR_REPORT/00_REPAIR_SUMMARY.md,report,"repair-phase executive summary",-
+create,PROJECT_REPAIR_REPORT/01_BASELINE_AND_FINAL_TESTS.md,report,"baseline T0 vs final test evidence",-
+create,PROJECT_REPAIR_REPORT/02_BUGS_FIXED.md,report,"per-defect fix catalogue with proofs",-
+create,PROJECT_REPAIR_REPORT/03_BACKEND_COMPLETENESS.md,report,"completeness status",-
+create,PROJECT_REPAIR_REPORT/04_DATABASE_AND_MIGRATIONS.md,report,"migration 0005 + drift checks",-
+create,PROJECT_REPAIR_REPORT/05_INTEGRATION_AND_API_REPORT.md,report,"live boot smoke + auth matrix",-
+create,PROJECT_REPAIR_REPORT/06_REMAINING_ISSUES.md,report,"deferred/blocked/decision-needed items",-
+create,PROJECT_REPAIR_REPORT/07_NEXT_PHASE_SECURITY_PLAN.md,report,"staged security hardening plan",-
+create,PROJECT_REPAIR_REPORT/08_CHANGE_MANIFEST.csv,report,"this manifest",-
+create,PROJECT_REPAIR_REPORT/09_HANDOFF.md,report,"handoff instructions",-
+local-only,.env,local,"generated by verified setup_dev.ps1 run; contains generated EMBEDDING_ENCRYPTION_KEY; gitignored; not part of the archive",-
+local-only,data/attendance.db,local,"dev SQLite DB migrated to 0005; gitignored; not part of the archive",-
+modify,app/config.py,backend,"readiness: confirmation default 3 frames/10 s (D-1); max_upload_bytes + auth_rate_limit_per_minute; production CORS/ADMIN_PASSWORD hard checks",D-1;SEC-04;SEC-10;SEC-11
+modify,app/main.py,backend,"readiness: BodySizeLimitMiddleware - declared bodies over MAX_UPLOAD_BYTES rejected with 413",SEC-10
+modify,app/api/auth.py,backend,"readiness: Redis-backed login throttle per (ip,user)+per-ip, 429 with Retry-After, fail-open on redis outage",SEC-05
+modify,app/services/enrollment.py,backend,"readiness: shared _quality_gate_or_raise now gates enroll, add-photos AND replace-face (D-2)",D-2
+modify,tests/test_quality.py,tests,"readiness: production startup test extended with CORS + ADMIN_PASSWORD hard checks",SEC-04;SEC-11
+modify,scripts/download_models.py,scripts,"readiness: create models dir before zip write; handle+recover flat official buffalo_l.zip layout (never exercised before)",DEF-34
+modify,scripts/check_accuracy.py,scripts,"readiness: explicit ADMIN_USERNAME/ADMIN_PASSWORD required, admin/admin fallback removed",SEC-13
+modify,.env.example,docs,"readiness: AUTH_RATE_LIMIT_PER_MINUTE + MAX_UPLOAD_BYTES rows; production hard-check notes",SEC-05;SEC-10
+modify,README.md,docs,"readiness: config table rows for new security settings + production hard-check notes",SEC-04;SEC-05;SEC-10;SEC-11
+modify,requirements.txt,deps,"readiness: fastapi 0.115.0->0.143.1 + explicit starlette==1.8.0 (14 advisories); python-multipart 0.0.12->0.0.31 (7 advisories) - approved by owner",SEC-16
+modify,docker-compose.yml,deploy,"readiness: inference service bootstraps weights via download_models.py before server start",DEF-35
+modify,Dockerfile,deploy,"readiness: mkdir+chown /models so the insightface named volume is writable by appuser",DEF-35
+create,scripts/validate_inference.py,scripts,"readiness: real-model canary - detect/embed + ACTIVE CUDA provider evidence",
+create,scripts/validate_compose.py,scripts,"readiness: static compose/Dockerfile consistency validator (no Docker needed)",DEF-35
+create,scripts/validate_e2e.py,scripts,"readiness: end-to-end acceptance driver (gate/duplicate/camera/WS/summary/cleanup)",
+create,tests/test_readiness_changes.py,tests,"readiness: 16 regressions for D-1/D-2, SEC-04/05/10/13 and DEF-34",D-1;D-2;SEC-04;SEC-05;SEC-10;SEC-13;DEF-34

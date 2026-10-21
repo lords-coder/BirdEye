@@ -1,0 +1,752 @@
+"""Per-camera pipeline body - executes inside a Celery worker slot.
+
+Flow inside one Celery child process:
+
+    FrameReader thread (CPU decode + sampling)
+        -> bounded queue (drop-oldest)
+    main loop (this task):
+        collect up to BATCH_SIZE frames (BATCH_FLUSH_MS window)
+        -> JPEG encode (CPU)
+        -> Redis RPC to the shared GPU inference service (batched)
+        -> cosine matching against the in-memory embedding index
+        -> dedup gate -> attendance transition + RecognitionLog + WS event
+
+The GPU model is NEVER loaded here in the default (redis) inference mode -
+all cameras across all worker slots share the single model instance.
+"""
+
+from __future__ import annotations
+
+import logging
+import queue as queue_mod
+import threading
+import time
+from datetime import datetime, timezone
+
+import redis as redis_lib
+
+from .. import redis_client as rc
+from ..config import settings
+from ..db import SessionLocal
+from ..inference import client as inf_client
+from ..matching import EmbeddingIndex
+from ..models import Camera, RecognitionLog, Student
+from ..pipeline.frame_reader import FramePacket, FrameReader
+from ..services import attendance as attendance_service
+from ..services import presence as presence_service
+from ..services.events import (
+    camera_state_event,
+    presence_event,
+    publish,
+    recognition_event,
+    recognition_log_event,
+    unknown_event,
+)
+
+logger = logging.getLogger("app.pipeline.camera")
+
+# K-of-N confirmation buffers: key f"{camera_id}:{student_id}" -> list[ts]
+#
+# Guarded by a lock: the Linux deployment runs one Celery PROCESS per camera
+# (prefork), so this dict was effectively private.  On Windows the prefork
+# pool cannot start (billiard named-semaphore PermissionError), so the worker
+# uses a threads pool and several camera pipelines mutate this dict from
+# concurrent threads.  Without the lock the housekeeping sweep races the
+# insert/delete paths (KeyError on `del`, or "dictionary changed size during
+# iteration").
+_CONFIRM_BUFFER: dict[str, list[float]] = {}
+_CONFIRM_LOCK = threading.Lock()
+
+
+def _confirm_pass(camera_id: int, student_id: int, ts: float) -> bool:
+    """Require K sightings within T seconds before confirming."""
+    k = int(settings.confirmation_frames)
+    window = float(settings.confirmation_window_s)
+    if k <= 1:
+        return True
+    key = f"{camera_id}:{student_id}"
+    with _CONFIRM_LOCK:
+        # Housekeeping: drop buffers whose newest observation fell out of the
+        # window.  Without this sweep, every (camera, student) pair that was
+        # seen once but never confirmed keeps its entry for the whole lifetime
+        # of the worker process (unbounded growth).
+        if window > 0:
+            stale_cutoff = ts - window
+            for old_key in [
+                ok for ok, b in _CONFIRM_BUFFER.items()
+                if b and max(b) < stale_cutoff
+            ]:
+                del _CONFIRM_BUFFER[old_key]
+        buf = _CONFIRM_BUFFER.get(key)
+        if buf is None:
+            buf = []
+            _CONFIRM_BUFFER[key] = buf
+        buf.append(ts)
+        # prune observations outside the window (the fresh one always survives)
+        cutoff = ts - window
+        buf[:] = [t for t in buf if t >= cutoff]
+        if len(buf) >= k:
+            # confirmed — release the buffer for the next cycle
+            buf.clear()
+            del _CONFIRM_BUFFER[key]
+            return True
+        return False
+
+
+def _unknown_hash(embedding) -> str:  # noqa: ANN001
+    """Quantized hash of an unknown face embedding for dedup.
+
+    Raw float embeddings change slightly every frame (lighting, angle,
+    JPEG noise), so hashing exact floats produces a new key per frame and
+    the dedup window never fires.  Rounding to 2 decimal places makes the
+    same person produce the same key across frames while still
+    distinguishing clearly different faces.
+
+    All dimensions are hashed (not just a prefix) so faces that differ
+    only in later dimensions still get distinct keys.
+    """
+    try:
+        import hashlib
+        import json as _json
+
+        payload = _json.dumps(
+            [round(float(x), 2) for x in embedding], separators=(",", ":")
+        )
+        return hashlib.md5(payload.encode()).hexdigest()[:8]
+    except Exception:
+        return "generic"
+
+
+def _should_stop(r: redis_lib.Redis, camera_id: int) -> bool:
+    try:
+        return r.get(rc.cam_stop_key(camera_id)) == "1"
+    except redis_lib.RedisError:
+        return False  # redis outage: keep running; stop flag will arrive later
+
+
+def _encode_jpeg(image) -> bytes | None:  # noqa: ANN001
+    import cv2
+
+    ok, buf = cv2.imencode(
+        ".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), settings.jpeg_quality]
+    )
+    if not ok:
+        return None
+    return buf.tobytes()
+
+
+def _collect_batch(
+    out_q: "queue.Queue[FramePacket]",
+    *,
+    max_frames: int,
+    flush_ms: int,
+    should_stop,
+) -> list[FramePacket]:
+    try:
+        first = out_q.get(timeout=0.25)
+    except queue_mod.Empty:
+        return []
+    deadline = time.monotonic() + flush_ms / 1000.0
+    batch = [first]
+    while len(batch) < max_frames and time.monotonic() < deadline:
+        if should_stop():
+            break
+        try:
+            batch.append(out_q.get_nowait())
+        except queue_mod.Empty:
+            break
+    return batch
+
+
+def _handle_faces(
+    db,
+    r: redis_lib.Redis,
+    camera: Camera,
+    packet: FramePacket,
+    faces: list[dict],
+    index: EmbeddingIndex,
+    timings: dict,
+) -> tuple[int, int]:
+    """Returns (matched, events) counts. Commits per recognized event."""
+    inference_ms = timings.get("total_ms")
+    ts = datetime.fromtimestamp(packet.ts, tz=timezone.utc)
+    matched = 0
+    events = 0
+
+    for face in faces:
+        embedding = face.get("embedding")
+        if not embedding:
+            continue
+        match = index.match(embedding)
+
+        if match.student_id is None:
+            # Per-face quantised hash: the same person produces the same key
+            # across frames (embeddings vary slightly per frame; rounding to
+            # 2 dp makes them stable).  Each distinct unknown gets ONE event
+            # per dedup_window; continuous sightings of the same person are
+            # suppressed.
+            if settings.log_unknown_faces and rc.dedup_pass(
+                r, camera.id, f"unknown:{_unknown_hash(embedding)}"
+            ):
+                row = RecognitionLog(
+                    student_id=None,
+                    camera_id=camera.id,
+                    timestamp=ts,
+                    confidence_score=match.score,
+                    gpu_inference_time_ms=inference_ms,
+                )
+                db.add(row)
+                db.flush()  # assign the audit-row id before it is published
+                log_id = int(row.id)
+                db.commit()
+                publish(
+                    r,
+                    unknown_event(
+                        camera=camera,
+                        confidence=match.score,
+                        inference_ms=inference_ms,
+                    ),
+                )
+                # Same persisted row, published for the Recognition Logs
+                # console: dedupe key = the database primary key.
+                publish(
+                    r,
+                    recognition_log_event(
+                        log_id=log_id,
+                        camera=camera,
+                        student=None,
+                        confidence=match.score,
+                        inference_ms=inference_ms,
+                        timestamp=ts,
+                        kind="unknown",
+                    ),
+                )
+                # alert for unknown face
+                try:
+                    from ..services import alerts as _alerts
+
+                    _alerts.create_alert(
+                        db,
+                        r,
+                        type="unknown_face",
+                        severity="high",
+                        payload={"confidence": match.score, "camera": camera.name},
+                        camera_id=camera.id,
+                    )
+                except Exception:
+                    pass
+                events += 1
+            continue
+
+        matched += 1
+        # low-confidence alert (even if dedup will suppress the event)
+        if float(match.score) < settings.alert_low_confidence:
+            try:
+                from ..services import alerts as _alerts
+
+                # dedup low-confidence alerts per student/camera to avoid spam
+                if rc.dedup_pass(
+                    r,
+                    camera.id,
+                    f"alert:lowconf:{match.student_id}",
+                    window=settings.alert_dedup_window_s,
+                ):
+                    _alerts.create_alert(
+                        db,
+                        r,
+                        type="low_confidence",
+                        severity="low",
+                        payload={"score": float(match.score), "camera": camera.name},
+                        camera_id=camera.id,
+                        student_id=int(match.student_id),
+                    )
+            except Exception:
+                pass
+        # K-of-N confirmation for robustness to spurious single-frame matches
+        if not _confirm_pass(camera.id, int(match.student_id), float(packet.ts)):
+            continue
+        # Dedup window: one event per (camera, student, camera-type) - controls
+        # DB growth while allowing entry/exit at the same "both" camera without
+        # one overwriting the other's dedup window.
+        if not rc.dedup_pass(r, camera.id, f"stu:{match.student_id}:{camera.type}"):
+            if settings.dedup_log_all:
+                # Audit row kept on a dedup hit ("log every sighting"): it is
+                # a real row in /attendance/logs, so publish it too - the
+                # console must mirror the table, not just the state changes.
+                row = RecognitionLog(
+                    student_id=match.student_id,
+                    camera_id=camera.id,
+                    timestamp=ts,
+                    confidence_score=match.score,
+                    gpu_inference_time_ms=inference_ms,
+                )
+                db.add(row)
+                db.flush()
+                log_id = int(row.id)
+                db.commit()
+                publish(
+                    r,
+                    recognition_log_event(
+                        log_id=log_id,
+                        camera=camera,
+                        student=db.get(Student, match.student_id),
+                        confidence=match.score,
+                        inference_ms=inference_ms,
+                        timestamp=ts,
+                        kind="recognized",
+                    ),
+                )
+            continue
+
+        row = RecognitionLog(
+            student_id=match.student_id,
+            camera_id=camera.id,
+            timestamp=ts,
+            confidence_score=match.score,
+            gpu_inference_time_ms=inference_ms,
+        )
+        db.add(row)
+        db.flush()  # assign the audit-row id before it is published
+        log_id = int(row.id)
+        # Persistent presence state machine (camera-attendance phase) wraps
+        # the session layer; PRESENCE_TRACKING_ENABLED=false keeps the
+        # legacy direct session behaviour.
+        if settings.presence_tracking_enabled:
+            outcome = presence_service.observe(
+                db,
+                student_id=int(match.student_id),
+                camera=camera,
+                ts=ts,
+                confidence=float(match.score),
+            )
+        else:
+            outcome = attendance_service.process_recognition(
+                db, student_id=match.student_id, camera=camera, ts=ts
+            )
+        db.commit()
+        events += 1
+
+        # Publish the audit row itself (every dedup-passing sighting writes
+        # one, but only state *transitions* emit `recognition`).  Published
+        # after commit so a cursor poll can never beat the row into existence.
+        publish(
+            r,
+            recognition_log_event(
+                log_id=log_id,
+                camera=camera,
+                student=db.get(Student, match.student_id),
+                confidence=match.score,
+                inference_ms=inference_ms,
+                timestamp=ts,
+                kind="recognized",
+            ),
+        )
+
+        if outcome.changed:
+            student = db.get(Student, match.student_id)
+            if student is not None:
+                if outcome.action != "none":
+                    publish(
+                        r,
+                        recognition_event(
+                            camera=camera,
+                            student=student,
+                            confidence=match.score,
+                            inference_ms=inference_ms,
+                            outcome=outcome,
+                        ),
+                    )
+                if getattr(outcome, "transitioned", False):
+                    publish(
+                        r,
+                        presence_event(camera=camera, student=student, outcome=outcome),
+                    )
+                if getattr(outcome, "review_event", False):
+                    # Doorway sighting with no active session: surface it
+                    # instead of silently inventing an exit.
+                    try:
+                        from ..services import alerts as _alerts
+
+                        _alerts.create_alert(
+                            db,
+                            r,
+                            type="exit_without_session",
+                            severity="medium",
+                            payload={
+                                "student_id": int(match.student_id),
+                                "camera": camera.name,
+                                "confidence": float(match.score),
+                            },
+                            camera_id=camera.id,
+                            student_id=int(match.student_id),
+                        )
+                        db.commit()
+                    except Exception:
+                        db.rollback()
+    return matched, events
+
+
+def run_camera_pipeline(camera_id: int, slot: int) -> dict:
+    r = rc.get_redis()
+    db = SessionLocal()
+    stop_event = threading.Event()
+    summary: dict = {"camera_id": camera_id, "slot": slot}
+    camera: Camera | None = None
+    reader: FrameReader | None = None
+
+    camera = db.get(Camera, camera_id)
+    if camera is None:
+        logger.error("camera %s not found - nothing to run", camera_id)
+        db.close()
+        return {**summary, "error": "camera not found"}
+
+    source = camera.build_rtsp_url() or camera.file_path or ""
+    out_q: queue_mod.Queue[FramePacket] = queue_mod.Queue(
+        maxsize=settings.frame_queue_size
+    )
+    # ------------------------------------------------- display tap (decoupled)
+    # Publishes decoded frames for the browser at LIVE_PUBLISH_FPS, on the
+    # capture thread, INDEPENDENT of sampling_rate (recognition cadence) and
+    # of inference latency - this is what keeps the video smooth and keeps it
+    # flowing through an inference outage.  Only the binary frame slot is
+    # written (publish_live_frame_raw), so the inference status hash keeps
+    # reporting the pipeline's own recognition state.
+    r_bin = rc.get_binary_redis()
+    display_interval_s = (
+        1.0 / settings.live_publish_fps if settings.live_publish_fps > 0 else 0.0
+    )
+
+    def _publish_display_frame(frame, ts: float) -> None:
+        from . import annotate as _annotate
+
+        small = _annotate.downscale(frame, settings.live_frame_width)
+        jpeg = _annotate.encode_jpeg(small, settings.live_frame_quality)
+        if jpeg:
+            rc.publish_live_frame_raw(
+                r_bin,
+                camera_id,
+                jpeg,
+                frame_ts=float(ts),
+                ttl_s=settings.live_frame_ttl_s,
+            )
+
+    reader = FrameReader(
+        camera_id=camera_id,
+        source=source,
+        sampling_rate=camera.sampling_rate,
+        out_q=out_q,
+        stop_event=stop_event,
+        rtsp_transport=settings.rtsp_transport,
+        open_timeout_ms=settings.rtsp_open_timeout_ms,
+        read_timeout_ms=settings.rtsp_read_timeout_ms,
+        reconnect_initial_delay_s=settings.reconnect_initial_delay_s,
+        reconnect_max_delay_s=settings.reconnect_max_delay_s,
+        on_display=_publish_display_frame if display_interval_s else None,
+        display_interval_s=display_interval_s,
+    )
+
+    index = EmbeddingIndex()
+    index.refresh(version=rc.students_version(r))
+
+    # ------------------------------------------------- mark ourselves alive
+    try:
+        r.set(rc.cam_state_key(camera_id), "running", ex=settings.camera_state_ttl_s)
+        r.sadd(settings.running_cameras_key, camera_id)
+        rc.touch_heartbeat(r, camera_id)
+        # Startup deadline met - clear it
+        r.delete(rc.cam_startup_deadline_key(camera_id))
+        r.delete(rc.cam_error_key(camera_id))
+    except redis_lib.RedisError as exc:
+        logger.warning("could not write running state: %s", exc)
+    publish(
+        r,
+        camera_state_event(
+            camera_id=camera.id, name=camera.name, state="running", slot=slot
+        ),
+    )
+    reader.start()
+    logger.info(
+        "camera pipeline running",
+        extra={
+            "camera_id": camera.id,
+            "slot": slot,
+            "type": camera.type,
+            "sampling_rate": camera.sampling_rate,
+            "threshold": index.threshold,
+        },
+    )
+
+    # Bounded startup: the pipeline has camera_startup_timeout_s to reach
+    # this point (first heartbeat after reader.start()).  The deadline was
+    # written by the API; if the worker reaches here, the deadline is met.
+    # If the worker crashes or hangs before here, the API-side deadline will
+    # be noticed by live-status and the UI will show FAILED.
+    started = time.time()
+    batches = frames_sent = faces_seen = matched_total = events = 0
+    rpc_failures = 0
+    ema_batch_fps = 0.0
+    # Track whether we've ever received a frame from the reader.
+    first_frame_received = False
+
+    try:
+        while not _should_stop(r, camera_id):
+            try:
+                rc.touch_heartbeat(r, camera_id)
+            except redis_lib.RedisError:
+                pass
+
+            # Bounded startup: if the reader has never produced a frame and the
+            # startup deadline has passed, fail with the real capture error.
+            if not first_frame_received:
+                deadline_raw = r.get(rc.cam_startup_deadline_key(camera_id))
+                if deadline_raw is not None:
+                    try:
+                        deadline = float(deadline_raw)
+                    except (TypeError, ValueError):
+                        deadline = None
+                    if deadline is not None and time.time() > deadline:
+                        # Startup timed out - get the capture error from the reader
+                        # if available, or synthesize a timeout error.
+                        err = "camera startup timed out: no frames received within deadline"
+                        try:
+                            r.set(rc.cam_state_key(camera_id), "failed", ex=settings.camera_failed_state_ttl_s)
+                            r.set(rc.cam_error_key(camera_id), err, ex=settings.camera_error_ttl_s)
+                            publish(
+                                r,
+                                camera_state_event(
+                                    camera_id=camera_id, name=camera.name, state="failed", slot=slot
+                                ),
+                            )
+                        except redis_lib.RedisError:
+                            pass
+                        logger.error(
+                            "camera startup deadline exceeded",
+                            extra={"camera_id": camera_id, "err": err},
+                        )
+                        return {**summary, "error": err}
+
+            batch = _collect_batch(
+                out_q,
+                max_frames=settings.batch_size,
+                flush_ms=settings.batch_flush_ms,
+                should_stop=lambda: _should_stop(r, camera_id),
+            )
+            if not batch:
+                continue
+
+            # First batch = first frames received from reader -> startup deadline met
+            if not first_frame_received:
+                first_frame_received = True
+                try:
+                    r.delete(rc.cam_startup_deadline_key(camera_id))
+                    r.delete(rc.cam_error_key(camera_id))
+                except redis_lib.RedisError:
+                    pass
+
+            jpegs: list[tuple[FramePacket, bytes]] = []
+            for packet in batch:
+                jpeg = _encode_jpeg(packet.image)
+                if jpeg:
+                    jpegs.append((packet, jpeg))
+            if not jpegs:
+                continue
+
+            t_rpc = time.perf_counter()
+            try:
+                response = inf_client.infer_frames([j for _, j in jpegs])
+                rpc_failures = 0
+            except inf_client.InferenceError as exc:
+                rpc_failures += 1
+                backoff = min(2 ** min(rpc_failures, 5), 30)
+                logger.error(
+                    "inference RPC failed (%d consecutive): %s - backing off %ds",
+                    rpc_failures,
+                    exc,
+                    backoff,
+                    extra={"camera_id": camera_id},
+                )
+                if rpc_failures == 3:
+                    try:
+                        from ..services import alerts as _alerts
+
+                        _alerts.create_alert(
+                            db,
+                            r,
+                            type="pipeline_error",
+                            severity="high",
+                            payload={"error": str(exc), "failures": rpc_failures},
+                            camera_id=camera_id,
+                        )
+                    except Exception:
+                        pass
+                stop_event.wait(backoff)
+                # Surface the outage on the monitor: no fresh frame is
+                # published, and the live hash carries the failure so the UI
+                # reports "inference unavailable" instead of guessing.
+                try:
+                    rc.publish_live_frame(
+                        rc.get_binary_redis(),
+                        r,
+                        camera_id,
+                        b"",
+                        frame_ts=time.time(),
+                        fps=0.0,
+                        infer_ok=False,
+                        infer_ms=None,
+                        faces=0,
+                        error=f"inference unavailable ({rpc_failures} consecutive failures)",
+                        ttl_s=settings.live_frame_ttl_s,
+                    )
+                except Exception:
+                    pass
+                continue
+
+            rpc_ms = (time.perf_counter() - t_rpc) * 1000.0
+            timings = response.get("timings", {})
+            results = response.get("results") or []
+            if len(results) != len(jpegs):
+                # A short/long reply means the inference service dropped or
+                # duplicated frames; process what we can but make it visible.
+                logger.warning(
+                    "inference reply length mismatch: sent %d frames, got %d results",
+                    len(jpegs),
+                    len(results),
+                    extra={"camera_id": camera_id},
+                )
+            batch_faces = 0
+            for (packet, _), faces in zip(jpegs, results):
+                batch_faces += len(faces)
+                # One bad row (DB hiccup, serialization error, ...) must not
+                # kill the whole camera pipeline: roll back and keep going.
+                try:
+                    m, ev = _handle_faces(
+                        db, r, camera, packet, faces, index, timings
+                    )
+                except Exception:
+                    logger.exception(
+                        "error handling faces for camera %s - skipping frame",
+                        camera_id,
+                    )
+                    try:
+                        db.rollback()
+                    except Exception:  # noqa: BLE001 - rollback is best-effort
+                        pass
+                    continue
+                matched_total += m
+                events += ev
+
+            # Display publishing: annotate the LAST frame of this batch (the
+            # freshest) and share ONE JPEG for all browser viewers.  This
+            # reuses the batch's detection+embedding results - no second
+            # inference run.  An inference outage (handled above with
+            # `continue`) skips this block, so the last good frame simply
+            # ages out instead of masquerading as live.
+            if jpegs:
+                try:
+                    from . import annotate as _annotate
+
+                    disp_packet, _ = jpegs[-1]
+                    disp_faces = (
+                        results[len(jpegs) - 1] if len(results) == len(jpegs) else []
+                    )
+                    dets = _annotate.build_detections(db, index, disp_faces or [])
+                    small = _annotate.downscale(
+                        disp_packet.image, settings.live_frame_width
+                    )
+                    src_h, src_w = disp_packet.image.shape[:2]
+                    marked = _annotate.annotate(small, dets, src_size=(src_w, src_h))
+                    live_jpeg = _annotate.encode_jpeg(
+                        marked, settings.live_frame_quality
+                    )
+                    if live_jpeg is not None:
+                        fps_now = len(jpegs) / max(rpc_ms / 1000.0, 1e-6)
+                        rc.publish_live_frame(
+                            rc.get_binary_redis(),
+                            r,
+                            camera_id,
+                            live_jpeg,
+                            frame_ts=float(disp_packet.ts),
+                            fps=fps_now,
+                            infer_ok=True,
+                            infer_ms=timings.get("total_ms"),
+                            faces=len(disp_faces),
+                            error=None,
+                            ttl_s=settings.live_frame_ttl_s,
+                        )
+                except Exception:
+                    logger.exception(
+                        "live frame publish failed for camera %s", camera_id
+                    )
+
+            # Health telemetry for the camera dashboard ("last frame at").
+            try:
+                camera.last_frame_at = datetime.now(timezone.utc)
+                db.commit()
+            except Exception:  # noqa: BLE001 - telemetry must never break the loop
+                db.rollback()
+
+            batches += 1
+            frames_sent += len(jpegs)
+            faces_seen += batch_faces
+            fps = len(jpegs) / max(rpc_ms / 1000.0, 1e-6)
+            ema_batch_fps += 0.1 * (fps - ema_batch_fps)
+            index.maybe_refresh()
+
+            logger.info(
+                "camera batch processed",
+                extra={
+                    "camera_id": camera_id,
+                    "frames": len(jpegs),
+                    "faces": batch_faces,
+                    "matched": matched_total,
+                    "events": events,
+                    "rpc_ms": round(rpc_ms, 1),
+                    "gpu_det_ms": timings.get("det_ms"),
+                    "gpu_emb_ms": timings.get("emb_ms"),
+                    "gpu_total_ms": timings.get("total_ms"),
+                    "batch_fps": round(fps, 2),
+                    "ema_batch_fps": round(ema_batch_fps, 2),
+                    "queue_depth": out_q.qsize(),
+                },
+            )
+    finally:
+        stop_event.set()
+        if reader is not None:
+            reader.join(timeout=3)
+        # ------------------------------------------------ cleanup all keys
+        try:
+            with r.pipeline() as pipe:
+                pipe.delete(rc.cam_state_key(camera_id))
+                pipe.delete(rc.cam_stop_key(camera_id))
+                pipe.delete(rc.cam_heartbeat_key(camera_id))
+                pipe.delete(rc.cam_task_key(camera_id))
+                pipe.srem(settings.running_cameras_key, camera_id)
+                pipe.execute()
+            owner = r.get(rc.cam_slot_key(slot))
+            if owner is not None and int(owner) == camera_id:
+                r.delete(rc.cam_slot_key(slot))
+        except redis_lib.RedisError:
+            pass
+        db.close()
+
+        summary.update(
+            {
+                "duration_s": round(time.time() - started, 1),
+                "batches": batches,
+                "frames": frames_sent,
+                "faces": faces_seen,
+                "matched": matched_total,
+                "events": events,
+            }
+        )
+        logger.info("camera pipeline stopped", extra=summary)
+        publish(
+            r,
+            camera_state_event(
+                camera_id=camera_id,
+                name=camera.name if camera else f"#{camera_id}",
+                state="stopped",
+                slot=slot,
+            ),
+        )
+    return summary

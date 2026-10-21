@@ -1,0 +1,19 @@
+# ---------------------------------------------------------------------------
+# AI Video Attendance backend - TEST/DEV-only dependencies
+#
+# Runtime dependencies live in requirements.txt.  Install both:
+#     pip install -r requirements.txt -r requirements-dev.txt
+#
+# PINNED: verified together with requirements.txt on 2026-10-14,
+# Windows 11 / Python 3.11.9 (`python -m pytest` => 151 passed, 1 skipped).
+# ---------------------------------------------------------------------------
+
+# Test runner (pyproject.toml sets addopts = "-q")
+pytest==9.1.1
+
+# In-process Redis double - tests/conftest.py routes all redis access here
+# so the suite needs no running server
+fakeredis==2.40.0
+
+# Transport for fastapi.testclient (TestClient -> httpx)
+httpx==0.28.1
